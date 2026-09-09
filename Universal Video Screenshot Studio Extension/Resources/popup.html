@@ -230,6 +230,24 @@
     }
     .save-btn:hover { background: #f2f2f7; }
     .save-btn.ok { background: #34c759; color: white; border-color: #34c759; }
+
+    @media (prefers-color-scheme: dark) {
+      body { background: #1c1c1e; color: #f5f5f7; }
+      .header { background: #2c2c2e; border-bottom-color: rgba(255,255,255,0.1); }
+      .app-name { color: #f5f5f7; }
+      .status-pill { background: #3a3a3c; }
+      .card { background: #2c2c2e; box-shadow: 0 1px 0 rgba(0,0,0,0.2), 0 0 0 0.5px rgba(255,255,255,0.08); }
+      .row + .row { border-top-color: rgba(255,255,255,0.07); }
+      .row-label, .q-label { color: #f5f5f7; }
+      .seg { color: #aeaeb2; }
+      .seg.active { background: #636366; color: #ffffff; }
+      .kbd { background: #3a3a3c; color: #f5f5f7; border-color: rgba(255,255,255,0.15); border-bottom-color: rgba(255,255,255,0.25); }
+      .change-btn { background: #3a3a3c; color: #f5f5f7; border-color: rgba(255,255,255,0.15); }
+      .change-btn:hover { background: #48484a; }
+      .save-btn { background: #2c2c2e; color: #f5f5f7; border-color: rgba(255,255,255,0.12); }
+      .save-btn:hover { background: #3a3a3c; }
+      .switch-slider { background-color: #48484a; }
+    }
   </style>
 </head>
 <body>

@@ -12,11 +12,13 @@
   // Safari compatibility shim
   const _browser = (typeof browser !== 'undefined') ? browser : chrome;
 
-  // ── Auto-enable CORS on all video elements ─────────────────────────────────
+  // ── Auto-enable CORS on newly created video elements ──────────────────────
   function ensureCors(video) {
     if (!video || video.dataset.uvsCors) return;
     video.dataset.uvsCors = 'true';
-    if (!video.crossOrigin) {
+    // Only set crossOrigin before media loading begins.
+    // Modifying crossOrigin on an already playing or buffered video forces WebKit to reload & reset playback!
+    if (!video.crossOrigin && !video.currentSrc && video.readyState === 0) {
       try {
         video.crossOrigin = 'anonymous';
       } catch (e) {}
@@ -240,19 +242,48 @@
     }, 4500);
   }
 
+  // ── CSP-safe DataURL to Blob conversion ───────────────────────────────────
+  function dataUrlToBlob(dataUrl) {
+    const parts = dataUrl.split(',');
+    const mime = (parts[0].match(/:(.*?);/) || [])[1] || 'image/png';
+    const bstr = atob(parts[1]);
+    const n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    for (let i = 0; i < n; i++) {
+      u8arr[i] = bstr.charCodeAt(i);
+    }
+    return new Blob([u8arr], { type: mime });
+  }
+
   // ── File Download ──────────────────────────────────────────────────────────
   function downloadBlob(blob, filename) {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => {
-      a.remove();
-      URL.revokeObjectURL(url);
-    }, 1000);
+    try {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        a.remove();
+        URL.revokeObjectURL(url);
+      }, 2000);
+    } catch (err) {
+      // Fallback for sandboxed iframes disallowing downloads
+      if (window !== window.top) {
+        window.top.postMessage({ action: 'uvs_download', blob, filename }, '*');
+      }
+    }
+  }
+
+  // Handle cross-frame download requests in top window
+  if (window === window.top) {
+    window.addEventListener('message', (ev) => {
+      if (ev.data && ev.data.action === 'uvs_download' && ev.data.blob && ev.data.filename) {
+        downloadBlob(ev.data.blob, ev.data.filename);
+      }
+    });
   }
 
   // ── High-Fidelity Video Frame Capture ──────────────────────────────────────
@@ -267,37 +298,43 @@
 
     const sourceW = video.videoWidth;
     const sourceH = video.videoHeight;
+    const maxDim = Math.max(sourceW, sourceH);
 
-    // Calculate target output dimensions based on scale preference
+    // Calculate target output dimensions respecting aspect ratio (landscape & portrait)
     let outW = sourceW;
     let outH = sourceH;
 
     if (prefs.scale === '4k') {
-      if (outW < 3840) {
-        const ratio = sourceH / sourceW;
-        outW = 3840;
-        outH = Math.round(3840 * ratio);
+      const targetMax = 3840;
+      if (maxDim < targetMax) {
+        const factor = targetMax / maxDim;
+        outW = Math.round(sourceW * factor);
+        outH = Math.round(sourceH * factor);
       }
     } else if (prefs.scale === '1080p') {
-      if (outW < 1920) {
-        const ratio = sourceH / sourceW;
-        outW = 1920;
-        outH = Math.round(1920 * ratio);
+      const targetMax = 1920;
+      if (maxDim < targetMax) {
+        const factor = targetMax / maxDim;
+        outW = Math.round(sourceW * factor);
+        outH = Math.round(sourceH * factor);
       }
     }
 
-    // Capture using GPU decode timestamp synchronization
+    // Capture using GPU decode timestamp synchronization with timeout fallback
     const captured = await new Promise((resolve) => {
       const doCapture = () => {
         const cv = document.createElement('canvas');
         cv.width = outW;
         cv.height = outH;
 
-        let ctx;
+        let ctx = null;
         try {
-          ctx = cv.getContext('2d', { colorSpace: 'display-p3', alpha: false });
-        } catch {
-          ctx = cv.getContext('2d', { alpha: false });
+          ctx = cv.getContext('2d', { colorSpace: 'display-p3' });
+        } catch (e) {}
+        if (!ctx) {
+          try {
+            ctx = cv.getContext('2d');
+          } catch (e) {}
         }
 
         if (!ctx) return null;
@@ -313,10 +350,19 @@
         }
       };
 
-      if (!video.paused && video.requestVideoFrameCallback) {
-        video.requestVideoFrameCallback(() => resolve(doCapture()));
-      } else {
+      let resolved = false;
+      const done = () => {
+        if (resolved) return;
+        resolved = true;
         resolve(doCapture());
+      };
+
+      if (!video.paused && typeof video.requestVideoFrameCallback === 'function') {
+        video.requestVideoFrameCallback(() => done());
+        // Safety timeout in case playback stalls or frame callback is delayed
+        setTimeout(done, 250);
+      } else {
+        done();
       }
     });
 
@@ -334,7 +380,7 @@
     try {
       if (prefs.format === 'tif' && typeof UTIF !== 'undefined') {
         const imgData = ctx.getImageData(0, 0, outW, outH);
-        const tifBuf = UTIF.encodeImage(new Uint8Array(imgData.data.buffer), outW, outH);
+        const tifBuf = UTIF.encodeImage(new Uint8Array(imgData.data), outW, outH);
         blob = new Blob([tifBuf], { type: 'image/tiff' });
         ext = 'tif';
       } else if (prefs.format === 'jpg') {
@@ -352,13 +398,13 @@
       }
     } catch (e) {
       try {
+        // CSP-safe fallback without using fetch()
         const mime = prefs.format === 'jpg' ? 'image/jpeg' : 'image/png';
         const dataUrl = canvas.toDataURL(mime, prefs.jpgQuality / 100);
-        const res = await fetch(dataUrl);
-        blob = await res.blob();
+        blob = dataUrlToBlob(dataUrl);
         ext = prefs.format === 'jpg' ? 'jpg' : 'png';
       } catch (err2) {
-        notify('Kare kaydedilemedi: ' + e.message, false);
+        notify('Kare kaydedilemedi: ' + (err2.message || e.message), false);
         return;
       }
     }
@@ -372,18 +418,32 @@
     downloadBlob(blob, filename);
 
     const sizeMB = (blob.size / 1024 / 1024).toFixed(1);
-    const qName = outW >= 3840 ? '4K Ultra HD' : (outW >= 1920 ? '1080p Full HD' : `${outW}×${outH}`);
+    const qName = maxDim >= 3840 ? '4K Ultra HD' : (maxDim >= 1920 ? '1080p Full HD' : `${outW}×${outH}`);
     notify(`✓ ${qName} (${outW}×${outH})  ·  ${sizeMB} MB  ·  ${ext.toUpperCase()}`, true);
   }
 
   // ── Capture Target Trigger ─────────────────────────────────────────────────
   function captureTarget() {
     const v = findTargetVideo();
-    if (!v) {
-      notify('Sayfada yakalanacak video bulunamadı', false);
+    if (v) {
+      captureVideo(v);
       return;
     }
-    captureVideo(v);
+
+    // If no video found in top frame, broadcast to child iframes
+    if (window === window.top) {
+      const iframes = document.querySelectorAll('iframe');
+      if (iframes.length > 0) {
+        iframes.forEach(f => {
+          try {
+            f.contentWindow?.postMessage({ action: 'uvs_trigger_capture' }, '*');
+          } catch (e) {}
+        });
+        return;
+      }
+    }
+
+    notify('Sayfada yakalanacak video bulunamadı', false);
   }
 
   // ── macOS Floating Settings Panel ──────────────────────────────────────────
@@ -840,17 +900,77 @@
         attachUniversalOverlay(v);
       });
     }
+    notifyTopFrameVideo();
   }
 
-  // MutationObserver for SPA / Dynamic Content
-  new MutationObserver(() => scanVideos())
+  // Cross-frame communication for embedded videos (iframes)
+  function notifyTopFrameVideo() {
+    if (window !== window.top) {
+      const v = findTargetVideo();
+      if (v) {
+        try {
+          window.top.postMessage({
+            action: 'uvs_child_video',
+            hasVideo: true,
+            videoTitle: getVideoTitle(v),
+            resolution: `${v.videoWidth}×${v.videoHeight}`
+          }, '*');
+        } catch (e) {}
+      }
+    }
+  }
+
+  let childFrameVideoInfo = null;
+  if (window === window.top) {
+    window.addEventListener('message', (ev) => {
+      if (ev.data && ev.data.action === 'uvs_child_video') {
+        childFrameVideoInfo = ev.data;
+      }
+    });
+  }
+
+  // Any frame listens for remote capture trigger
+  window.addEventListener('message', (ev) => {
+    if (ev.data && ev.data.action === 'uvs_trigger_capture') {
+      const v = findTargetVideo();
+      if (v) captureVideo(v);
+    }
+  });
+
+  // Throttled MutationObserver for SPA / Dynamic Content (avoids high CPU)
+  let scanTimer = null;
+  function scheduleScan() {
+    if (scanTimer) return;
+    scanTimer = setTimeout(() => {
+      scanTimer = null;
+      scanVideos();
+    }, 250);
+  }
+
+  new MutationObserver(() => scheduleScan())
     .observe(document.body || document.documentElement, { childList: true, subtree: true });
+
+  // ── Typing Detection Helper ────────────────────────────────────────────────
+  function isTyping(e) {
+    const check = (node) => {
+      if (!node) return false;
+      const tag = (node.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return true;
+      if (node.isContentEditable) return true;
+      if (node.getAttribute) {
+        const role = node.getAttribute('role');
+        if (role === 'textbox' || role === 'searchbox' || role === 'combobox') return true;
+        if (node.getAttribute('contenteditable') === 'true') return true;
+      }
+      return false;
+    };
+    return check(e.target) || check(document.activeElement);
+  }
 
   // ── Keyboard Shortcut Handler ──────────────────────────────────────────────
   document.addEventListener('keydown', (e) => {
     if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
-    const tag = (document.activeElement?.tagName || '').toLowerCase();
-    if (tag === 'input' || tag === 'textarea' || tag === 'select' || document.activeElement?.isContentEditable) return;
+    if (isTyping(e)) return;
     if (document.getElementById('uvs-panel')) return;
 
     if (e.key.toLowerCase() === prefs.shortcutKey) {
@@ -859,6 +979,10 @@
         e.preventDefault();
         e.stopPropagation();
         captureVideo(target);
+      } else if (window === window.top && childFrameVideoInfo && childFrameVideoInfo.hasVideo) {
+        e.preventDefault();
+        e.stopPropagation();
+        captureTarget();
       }
     }
   }, true);
@@ -868,12 +992,28 @@
     if (req.action === 'get_page_status') {
       const target = findTargetVideo();
       const count = document.querySelectorAll('video').length;
-      sendResponse({
-        hasVideo: !!target,
-        videoCount: count,
-        videoTitle: target ? getVideoTitle(target) : '',
-        resolution: target ? `${target.videoWidth}×${target.videoHeight}` : ''
-      });
+      if (target) {
+        sendResponse({
+          hasVideo: true,
+          videoCount: count,
+          videoTitle: getVideoTitle(target),
+          resolution: `${target.videoWidth}×${target.videoHeight}`
+        });
+      } else if (childFrameVideoInfo && childFrameVideoInfo.hasVideo) {
+        sendResponse({
+          hasVideo: true,
+          videoCount: 1,
+          videoTitle: childFrameVideoInfo.videoTitle || 'Gömülü Video',
+          resolution: childFrameVideoInfo.resolution || ''
+        });
+      } else {
+        sendResponse({
+          hasVideo: false,
+          videoCount: 0,
+          videoTitle: '',
+          resolution: ''
+        });
+      }
       return false;
     }
 

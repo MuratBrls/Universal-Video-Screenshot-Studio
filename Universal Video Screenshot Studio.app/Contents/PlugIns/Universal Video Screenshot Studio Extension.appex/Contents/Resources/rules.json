@@ -5,9 +5,9 @@
     "action": {
       "type": "modifyHeaders",
       "responseHeaders": [
-        { "header": "access-control-allow-origin", "operation": "set", "value": "*" },
-        { "header": "access-control-allow-methods", "operation": "set", "value": "GET, HEAD, OPTIONS" },
-        { "header": "access-control-allow-headers", "operation": "set", "value": "*" }
+        { "header": "Access-Control-Allow-Origin", "operation": "set", "value": "*" },
+        { "header": "Access-Control-Allow-Methods", "operation": "set", "value": "GET, HEAD, OPTIONS" },
+        { "header": "Access-Control-Allow-Headers", "operation": "set", "value": "*" }
       ]
     },
     "condition": {
