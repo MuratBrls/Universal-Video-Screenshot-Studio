@@ -1,0 +1,19 @@
+# OS & Editor
+.DS_Store
+Thumbs.db
+*.user
+*.suo
+
+# Xcode
+xcuserdata/
+*.xcuserstate
+DerivedData/
+build/
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Temp & Logs
+*.log
+*.tmp
