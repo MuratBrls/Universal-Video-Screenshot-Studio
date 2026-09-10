@@ -80,16 +80,37 @@
   setInterval(boostYouTubeQuality, 3000);
 
   // ── State & Active Video Tracking ──────────────────────────────────────────
-  let lastHoveredVideo = null;
+  let currentlyHoveredVideo = null;
   let activeVideo = null;
+
+  function isElementInViewport(el) {
+    if (!el || !document.contains(el)) return false;
+    const rect = el.getBoundingClientRect();
+    return (
+      rect.bottom > 0 &&
+      rect.top < window.innerHeight &&
+      rect.right > 0 &&
+      rect.left < window.innerWidth &&
+      rect.width > 0 &&
+      rect.height > 0
+    );
+  }
 
   document.addEventListener('pointerover', (e) => {
     const v = e.target.closest('video') ||
               (e.target.querySelector && e.target.querySelector('video'));
     if (v && v.tagName === 'VIDEO') {
       ensureCors(v);
-      lastHoveredVideo = v;
+      currentlyHoveredVideo = v;
       activeVideo = v;
+    }
+  }, true);
+
+  document.addEventListener('pointerout', (e) => {
+    if (currentlyHoveredVideo && (e.target === currentlyHoveredVideo || !currentlyHoveredVideo.contains(e.target))) {
+      if (!e.relatedTarget || !currentlyHoveredVideo.contains(e.relatedTarget)) {
+        currentlyHoveredVideo = null;
+      }
     }
   }, true);
 
@@ -144,6 +165,7 @@
       .replace(/\s*-\s*Twitter$/i, '')
       .replace(/\s*•\s*Instagram.*$/i, '')
       .replace(/\s*:\s*Reddit$/i, '')
+      .replace(/\s*\|\s*TikTok$/i, '')
       .trim();
 
     return docTitle || 'Video_Frame';
@@ -157,38 +179,43 @@
       if (fsVideo && fsVideo.videoWidth > 0) return fsVideo;
     }
 
-    // 2. Currently hovered video
-    if (lastHoveredVideo && document.contains(lastHoveredVideo) && lastHoveredVideo.videoWidth > 0) {
-      return lastHoveredVideo;
+    // 2. Video currently under mouse cursor & visible in viewport
+    if (currentlyHoveredVideo && isElementInViewport(currentlyHoveredVideo) && currentlyHoveredVideo.videoWidth > 0) {
+      return currentlyHoveredVideo;
     }
 
-    // 3. Actively playing video
     const allVideos = Array.from(document.querySelectorAll('video')).filter(v => v.videoWidth > 0);
     if (allVideos.length === 0) return null;
 
-    const playing = allVideos.find(v => !v.paused && !v.ended && v.currentTime > 0);
-    if (playing) return playing;
+    // 3. Actively playing video visible in viewport
+    const playingVisible = allVideos.find(v => !v.paused && !v.ended && v.currentTime > 0 && isElementInViewport(v));
+    if (playingVisible) return playingVisible;
 
-    // 4. Recently active video
-    if (activeVideo && document.contains(activeVideo) && activeVideo.videoWidth > 0) {
+    // 4. Any actively playing video
+    const anyPlaying = allVideos.find(v => !v.paused && !v.ended && v.currentTime > 0);
+    if (anyPlaying) return anyPlaying;
+
+    // 5. Recently active video if still visible in viewport
+    if (activeVideo && isElementInViewport(activeVideo) && activeVideo.videoWidth > 0) {
       return activeVideo;
     }
 
-    // 5. Largest visible video
+    // 6. Largest visible video in viewport
     let best = null;
     let maxArea = -1;
     for (const v of allVideos) {
-      const rect = v.getBoundingClientRect();
-      const visible = rect.bottom > 0 && rect.top < window.innerHeight &&
-                      rect.right > 0 && rect.left < window.innerWidth;
-      const area = rect.width * rect.height;
-      if (visible && area > maxArea) {
-        maxArea = area;
-        best = v;
+      if (isElementInViewport(v)) {
+        const rect = v.getBoundingClientRect();
+        const area = rect.width * rect.height;
+        if (area > maxArea) {
+          maxArea = area;
+          best = v;
+        }
       }
     }
+    if (best) return best;
 
-    return best || allVideos[0] || null;
+    return allVideos[0] || null;
   }
 
   // ── macOS Floating Toast Notification ──────────────────────────────────────
@@ -405,13 +432,13 @@
         ext = prefs.format === 'jpg' ? 'jpg' : 'png';
       } catch (err2) {
         notify('Kare kaydedilemedi: ' + (err2.message || e.message), false);
-        return;
+        return false;
       }
     }
 
     if (!blob) {
       notify('Video karesi kaydedilemedi', false);
-      return;
+      return false;
     }
 
     const filename = `${title}_${timeLabel}.${ext}`;
@@ -420,14 +447,14 @@
     const sizeMB = (blob.size / 1024 / 1024).toFixed(1);
     const qName = maxDim >= 3840 ? '4K Ultra HD' : (maxDim >= 1920 ? '1080p Full HD' : `${outW}×${outH}`);
     notify(`✓ ${qName} (${outW}×${outH})  ·  ${sizeMB} MB  ·  ${ext.toUpperCase()}`, true);
+    return true;
   }
 
   // ── Capture Target Trigger ─────────────────────────────────────────────────
-  function captureTarget() {
+  async function captureTarget() {
     const v = findTargetVideo();
     if (v) {
-      captureVideo(v);
-      return;
+      return await captureVideo(v);
     }
 
     // If no video found in top frame, broadcast to child iframes
@@ -439,11 +466,12 @@
             f.contentWindow?.postMessage({ action: 'uvs_trigger_capture' }, '*');
           } catch (e) {}
         });
-        return;
+        return true;
       }
     }
 
     notify('Sayfada yakalanacak video bulunamadı', false);
+    return false;
   }
 
   // ── macOS Floating Settings Panel ──────────────────────────────────────────
@@ -664,10 +692,9 @@
   // ── YouTube Specific Button Integration ────────────────────────────────────
   function injectYouTubeButtons() {
     if (!location.hostname.includes('youtube.com')) return;
-    if (document.getElementById('yt-fc-btn')) return;
-
     const controls = document.querySelector('.ytp-right-controls');
     if (!controls) return;
+    if (controls.querySelector('#yt-fc-btn')) return;
 
     const makeBtn = (id, title, svg, onClick) => {
       const b = document.createElement('button');
@@ -1018,9 +1045,10 @@
     }
 
     if (req.action === 'capture_now') {
-      captureTarget();
-      sendResponse({ success: true });
-      return false;
+      captureTarget().then(ok => {
+        sendResponse({ success: !!ok });
+      });
+      return true; // Keep message channel open for async response
     }
 
     return false;

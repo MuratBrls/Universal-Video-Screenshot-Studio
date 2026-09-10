@@ -128,14 +128,21 @@
       const tabId = tabs[0]?.id;
       if (!tabId) return;
 
-      _browser.tabs.sendMessage(tabId, { action: 'capture_now' }, () => {
+      captureBtn.disabled = true;
+      _browser.tabs.sendMessage(tabId, { action: 'capture_now' }, (res) => {
+        captureBtn.disabled = false;
         const originalText = captureBtn.innerHTML;
-        captureBtn.innerHTML = `<span>✓ Kare İndirildi</span>`;
-        captureBtn.style.background = '#34c759';
+        if (res && res.success) {
+          captureBtn.innerHTML = `<span>✓ Kare İndirildi</span>`;
+          captureBtn.style.background = '#34c759';
+        } else {
+          captureBtn.innerHTML = `<span>⚠️ Video Bulunamadı</span>`;
+          captureBtn.style.background = '#ff9500';
+        }
         setTimeout(() => {
           captureBtn.innerHTML = originalText;
           captureBtn.style.background = '';
-        }, 1500);
+        }, 1600);
       });
     });
   });
@@ -169,10 +176,20 @@
     updateSlider(slider.value);
   });
 
+  slider.addEventListener('change', () => {
+    const val = parseInt(slider.value, 10);
+    _browser.storage.local.set({ jpgQuality: val });
+  });
+
   function updateSlider(val) {
     const pct = ((val - 60) / 40) * 100;
     slider.style.setProperty('--pct', pct + '%');
   }
+
+  // Auto-save overlay toggle
+  overlaySwitch.addEventListener('change', () => {
+    _browser.storage.local.set({ showOverlay: overlaySwitch.checked });
+  });
 
   // ── Keyboard Shortcut Recorder ─────────────────────────────────────────────
   let recording = false;
