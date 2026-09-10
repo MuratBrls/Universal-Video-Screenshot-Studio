@@ -6,11 +6,11 @@
 	<dict>
 		<key>Resources/background.js</key>
 		<data>
-		zX91pc0pNKBiG/rFHFmCWCSG0fw=
+		yD7egJIAmI0WOEikW4wUekSwmak=
 		</data>
 		<key>Resources/content.js</key>
 		<data>
-		SjljCyqIr8zkGekKgYYwI42gFvM=
+		dPklXg7AIFXsIEsIw3TG/fCJiyQ=
 		</data>
 		<key>Resources/icons/icon128.png</key>
 		<data>
@@ -26,7 +26,7 @@
 		</data>
 		<key>Resources/manifest.json</key>
 		<data>
-		kD7ng1BH2qeA53rrfpuVVwFNm2o=
+		Re9AIuXxweoheAQfMTcYGcpl0VI=
 		</data>
 		<key>Resources/popup.html</key>
 		<data>
@@ -34,7 +34,7 @@
 		</data>
 		<key>Resources/popup.js</key>
 		<data>
-		nZQ3fPhlJe3zat8Pv7dchDh640M=
+		47KrHSP4EILiuI9MqLyFts1Yvh0=
 		</data>
 		<key>Resources/rules.json</key>
 		<data>
@@ -51,14 +51,14 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			F5Wjh4tmawd38WgLCEDCtGygBpR7vS9KMgMrCgAxO90=
+			6NrtGxgnkYixlFaTqmfsn6SojoJ3qm7+raYHjG5k7M0=
 			</data>
 		</dict>
 		<key>Resources/content.js</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			gfj0stG0bxmLFdPqZB1/dt+0/sk39qP2XfC3NJKBwNE=
+			C1HtBLJKfKswb9k+KzqP+BYBu5h38mMpm0+KjNbpPI0=
 			</data>
 		</dict>
 		<key>Resources/icons/icon128.png</key>
@@ -86,7 +86,7 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			NuWK/LHBsBy+dZCX8p96OZ8L1aSpQ8Cz+o/DXqQE5yw=
+			XtgRzIAeb5ERBLOy7mOGn/cHwN8uq/aNjv77hQJRIr4=
 			</data>
 		</dict>
 		<key>Resources/popup.html</key>
@@ -100,7 +100,7 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			P8axkXRUnRv3WOb9FOkk3hrF96tuA116Cgp1fALhcqQ=
+			bkqrAWZ/c0EU077IvoevSTBHl1A0zMzWSSXMb90wp+o=
 			</data>
 		</dict>
 		<key>Resources/rules.json</key>

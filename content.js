@@ -292,10 +292,11 @@
       a.style.display = 'none';
       document.body.appendChild(a);
       a.click();
+      // Keep blob alive for 30s so WebKit doesn't cancel download with WebKitBlobResource error 1
       setTimeout(() => {
         a.remove();
         URL.revokeObjectURL(url);
-      }, 2000);
+      }, 30000);
     } catch (err) {
       // Fallback for sandboxed iframes disallowing downloads
       if (window !== window.top) {
@@ -313,11 +314,11 @@
     });
   }
 
-  // ── High-Fidelity Video Frame Capture ──────────────────────────────────────
-  async function captureVideo(video) {
+  // ── Synchronous High-Fidelity Video Frame Capture ──────────────────────────
+  function captureVideo(video) {
     if (!video || !video.videoWidth || !video.videoHeight) {
       notify('Yakalanacak video karesi bulunamadı', false);
-      return;
+      return false;
     }
 
     ensureCors(video);
@@ -347,63 +348,43 @@
       }
     }
 
-    // Capture using GPU decode timestamp synchronization with timeout fallback
-    const captured = await new Promise((resolve) => {
-      const doCapture = () => {
-        const cv = document.createElement('canvas');
-        cv.width = outW;
-        cv.height = outH;
+    // Capture synchronously within active user gesture stack
+    const cv = document.createElement('canvas');
+    cv.width = outW;
+    cv.height = outH;
 
-        let ctx = null;
-        try {
-          ctx = cv.getContext('2d', { colorSpace: 'display-p3' });
-        } catch (e) {}
-        if (!ctx) {
-          try {
-            ctx = cv.getContext('2d');
-          } catch (e) {}
-        }
-
-        if (!ctx) return null;
-
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-
-        try {
-          ctx.drawImage(video, 0, 0, outW, outH);
-          return { canvas: cv, ctx };
-        } catch (e) {
-          return null;
-        }
-      };
-
-      let resolved = false;
-      const done = () => {
-        if (resolved) return;
-        resolved = true;
-        resolve(doCapture());
-      };
-
-      if (!video.paused && typeof video.requestVideoFrameCallback === 'function') {
-        video.requestVideoFrameCallback(() => done());
-        // Safety timeout in case playback stalls or frame callback is delayed
-        setTimeout(done, 250);
-      } else {
-        done();
-      }
-    });
-
-    if (!captured || !captured.canvas) {
-      notify('Video karesi okunamadı (DRM korumalı olabilir)', false);
-      return;
+    let ctx = null;
+    try {
+      ctx = cv.getContext('2d', { colorSpace: 'display-p3' });
+    } catch (e) {}
+    if (!ctx) {
+      try {
+        ctx = cv.getContext('2d');
+      } catch (e) {}
     }
 
-    const { canvas, ctx } = captured;
+    if (!ctx) {
+      notify('Tuval (canvas) oluşturulamadı', false);
+      return false;
+    }
+
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+
+    try {
+      ctx.drawImage(video, 0, 0, outW, outH);
+    } catch (e) {
+      notify('Video karesi korumalı (CORS/DRM engeli)', false);
+      return false;
+    }
+
     const timeLabel = fmtTime(video.currentTime || 0);
     const rawTitle = getVideoTitle(video);
     const title = sanitize(rawTitle);
 
-    let blob, ext;
+    let blob = null;
+    let ext = 'png';
+
     try {
       if (prefs.format === 'tif' && typeof UTIF !== 'undefined') {
         const imgData = ctx.getImageData(0, 0, outW, outH);
@@ -412,28 +393,18 @@
         ext = 'tif';
       } else if (prefs.format === 'jpg') {
         const quality = Math.max(0.1, Math.min(1.0, prefs.jpgQuality / 100));
-        blob = await new Promise((res, rej) => {
-          canvas.toBlob(b => b ? res(b) : rej(new Error('toBlob failed')), 'image/jpeg', quality);
-        });
+        const dataUrl = cv.toDataURL('image/jpeg', quality);
+        blob = dataUrlToBlob(dataUrl);
         ext = 'jpg';
       } else {
         // Lossless PNG with Display-P3 wide color gamut
-        blob = await new Promise((res, rej) => {
-          canvas.toBlob(b => b ? res(b) : rej(new Error('toBlob failed')), 'image/png');
-        });
+        const dataUrl = cv.toDataURL('image/png');
+        blob = dataUrlToBlob(dataUrl);
         ext = 'png';
       }
     } catch (e) {
-      try {
-        // CSP-safe fallback without using fetch()
-        const mime = prefs.format === 'jpg' ? 'image/jpeg' : 'image/png';
-        const dataUrl = canvas.toDataURL(mime, prefs.jpgQuality / 100);
-        blob = dataUrlToBlob(dataUrl);
-        ext = prefs.format === 'jpg' ? 'jpg' : 'png';
-      } catch (err2) {
-        notify('Kare kaydedilemedi: ' + (err2.message || e.message), false);
-        return false;
-      }
+      notify('Kare kaydedilemedi: ' + (e.message || ''), false);
+      return false;
     }
 
     if (!blob) {
@@ -451,10 +422,10 @@
   }
 
   // ── Capture Target Trigger ─────────────────────────────────────────────────
-  async function captureTarget() {
+  function captureTarget() {
     const v = findTargetVideo();
     if (v) {
-      return await captureVideo(v);
+      return captureVideo(v);
     }
 
     // If no video found in top frame, broadcast to child iframes
@@ -1045,10 +1016,9 @@
     }
 
     if (req.action === 'capture_now') {
-      captureTarget().then(ok => {
-        sendResponse({ success: !!ok });
-      });
-      return true; // Keep message channel open for async response
+      const ok = captureTarget();
+      sendResponse({ success: !!ok });
+      return false;
     }
 
     return false;
@@ -1059,4 +1029,9 @@
   } else {
     scanVideos();
   }
+
+  // SPA navigation events for YouTube, Vimeo, Twitter/X
+  window.addEventListener('yt-navigate-finish', () => setTimeout(scanVideos, 350));
+  window.addEventListener('load', scanVideos);
+  window.addEventListener('focus', scanVideos);
 })();

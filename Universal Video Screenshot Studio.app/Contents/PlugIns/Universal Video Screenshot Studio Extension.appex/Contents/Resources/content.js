@@ -80,16 +80,37 @@
   setInterval(boostYouTubeQuality, 3000);
 
   // ── State & Active Video Tracking ──────────────────────────────────────────
-  let lastHoveredVideo = null;
+  let currentlyHoveredVideo = null;
   let activeVideo = null;
+
+  function isElementInViewport(el) {
+    if (!el || !document.contains(el)) return false;
+    const rect = el.getBoundingClientRect();
+    return (
+      rect.bottom > 0 &&
+      rect.top < window.innerHeight &&
+      rect.right > 0 &&
+      rect.left < window.innerWidth &&
+      rect.width > 0 &&
+      rect.height > 0
+    );
+  }
 
   document.addEventListener('pointerover', (e) => {
     const v = e.target.closest('video') ||
               (e.target.querySelector && e.target.querySelector('video'));
     if (v && v.tagName === 'VIDEO') {
       ensureCors(v);
-      lastHoveredVideo = v;
+      currentlyHoveredVideo = v;
       activeVideo = v;
+    }
+  }, true);
+
+  document.addEventListener('pointerout', (e) => {
+    if (currentlyHoveredVideo && (e.target === currentlyHoveredVideo || !currentlyHoveredVideo.contains(e.target))) {
+      if (!e.relatedTarget || !currentlyHoveredVideo.contains(e.relatedTarget)) {
+        currentlyHoveredVideo = null;
+      }
     }
   }, true);
 
@@ -144,6 +165,7 @@
       .replace(/\s*-\s*Twitter$/i, '')
       .replace(/\s*•\s*Instagram.*$/i, '')
       .replace(/\s*:\s*Reddit$/i, '')
+      .replace(/\s*\|\s*TikTok$/i, '')
       .trim();
 
     return docTitle || 'Video_Frame';
@@ -157,38 +179,43 @@
       if (fsVideo && fsVideo.videoWidth > 0) return fsVideo;
     }
 
-    // 2. Currently hovered video
-    if (lastHoveredVideo && document.contains(lastHoveredVideo) && lastHoveredVideo.videoWidth > 0) {
-      return lastHoveredVideo;
+    // 2. Video currently under mouse cursor & visible in viewport
+    if (currentlyHoveredVideo && isElementInViewport(currentlyHoveredVideo) && currentlyHoveredVideo.videoWidth > 0) {
+      return currentlyHoveredVideo;
     }
 
-    // 3. Actively playing video
     const allVideos = Array.from(document.querySelectorAll('video')).filter(v => v.videoWidth > 0);
     if (allVideos.length === 0) return null;
 
-    const playing = allVideos.find(v => !v.paused && !v.ended && v.currentTime > 0);
-    if (playing) return playing;
+    // 3. Actively playing video visible in viewport
+    const playingVisible = allVideos.find(v => !v.paused && !v.ended && v.currentTime > 0 && isElementInViewport(v));
+    if (playingVisible) return playingVisible;
 
-    // 4. Recently active video
-    if (activeVideo && document.contains(activeVideo) && activeVideo.videoWidth > 0) {
+    // 4. Any actively playing video
+    const anyPlaying = allVideos.find(v => !v.paused && !v.ended && v.currentTime > 0);
+    if (anyPlaying) return anyPlaying;
+
+    // 5. Recently active video if still visible in viewport
+    if (activeVideo && isElementInViewport(activeVideo) && activeVideo.videoWidth > 0) {
       return activeVideo;
     }
 
-    // 5. Largest visible video
+    // 6. Largest visible video in viewport
     let best = null;
     let maxArea = -1;
     for (const v of allVideos) {
-      const rect = v.getBoundingClientRect();
-      const visible = rect.bottom > 0 && rect.top < window.innerHeight &&
-                      rect.right > 0 && rect.left < window.innerWidth;
-      const area = rect.width * rect.height;
-      if (visible && area > maxArea) {
-        maxArea = area;
-        best = v;
+      if (isElementInViewport(v)) {
+        const rect = v.getBoundingClientRect();
+        const area = rect.width * rect.height;
+        if (area > maxArea) {
+          maxArea = area;
+          best = v;
+        }
       }
     }
+    if (best) return best;
 
-    return best || allVideos[0] || null;
+    return allVideos[0] || null;
   }
 
   // ── macOS Floating Toast Notification ──────────────────────────────────────
@@ -265,10 +292,11 @@
       a.style.display = 'none';
       document.body.appendChild(a);
       a.click();
+      // Keep blob alive for 30s so WebKit doesn't cancel download with WebKitBlobResource error 1
       setTimeout(() => {
         a.remove();
         URL.revokeObjectURL(url);
-      }, 2000);
+      }, 30000);
     } catch (err) {
       // Fallback for sandboxed iframes disallowing downloads
       if (window !== window.top) {
@@ -286,11 +314,11 @@
     });
   }
 
-  // ── High-Fidelity Video Frame Capture ──────────────────────────────────────
-  async function captureVideo(video) {
+  // ── Synchronous High-Fidelity Video Frame Capture ──────────────────────────
+  function captureVideo(video) {
     if (!video || !video.videoWidth || !video.videoHeight) {
       notify('Yakalanacak video karesi bulunamadı', false);
-      return;
+      return false;
     }
 
     ensureCors(video);
@@ -320,63 +348,43 @@
       }
     }
 
-    // Capture using GPU decode timestamp synchronization with timeout fallback
-    const captured = await new Promise((resolve) => {
-      const doCapture = () => {
-        const cv = document.createElement('canvas');
-        cv.width = outW;
-        cv.height = outH;
+    // Capture synchronously within active user gesture stack
+    const cv = document.createElement('canvas');
+    cv.width = outW;
+    cv.height = outH;
 
-        let ctx = null;
-        try {
-          ctx = cv.getContext('2d', { colorSpace: 'display-p3' });
-        } catch (e) {}
-        if (!ctx) {
-          try {
-            ctx = cv.getContext('2d');
-          } catch (e) {}
-        }
-
-        if (!ctx) return null;
-
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-
-        try {
-          ctx.drawImage(video, 0, 0, outW, outH);
-          return { canvas: cv, ctx };
-        } catch (e) {
-          return null;
-        }
-      };
-
-      let resolved = false;
-      const done = () => {
-        if (resolved) return;
-        resolved = true;
-        resolve(doCapture());
-      };
-
-      if (!video.paused && typeof video.requestVideoFrameCallback === 'function') {
-        video.requestVideoFrameCallback(() => done());
-        // Safety timeout in case playback stalls or frame callback is delayed
-        setTimeout(done, 250);
-      } else {
-        done();
-      }
-    });
-
-    if (!captured || !captured.canvas) {
-      notify('Video karesi okunamadı (DRM korumalı olabilir)', false);
-      return;
+    let ctx = null;
+    try {
+      ctx = cv.getContext('2d', { colorSpace: 'display-p3' });
+    } catch (e) {}
+    if (!ctx) {
+      try {
+        ctx = cv.getContext('2d');
+      } catch (e) {}
     }
 
-    const { canvas, ctx } = captured;
+    if (!ctx) {
+      notify('Tuval (canvas) oluşturulamadı', false);
+      return false;
+    }
+
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+
+    try {
+      ctx.drawImage(video, 0, 0, outW, outH);
+    } catch (e) {
+      notify('Video karesi korumalı (CORS/DRM engeli)', false);
+      return false;
+    }
+
     const timeLabel = fmtTime(video.currentTime || 0);
     const rawTitle = getVideoTitle(video);
     const title = sanitize(rawTitle);
 
-    let blob, ext;
+    let blob = null;
+    let ext = 'png';
+
     try {
       if (prefs.format === 'tif' && typeof UTIF !== 'undefined') {
         const imgData = ctx.getImageData(0, 0, outW, outH);
@@ -385,33 +393,23 @@
         ext = 'tif';
       } else if (prefs.format === 'jpg') {
         const quality = Math.max(0.1, Math.min(1.0, prefs.jpgQuality / 100));
-        blob = await new Promise((res, rej) => {
-          canvas.toBlob(b => b ? res(b) : rej(new Error('toBlob failed')), 'image/jpeg', quality);
-        });
+        const dataUrl = cv.toDataURL('image/jpeg', quality);
+        blob = dataUrlToBlob(dataUrl);
         ext = 'jpg';
       } else {
         // Lossless PNG with Display-P3 wide color gamut
-        blob = await new Promise((res, rej) => {
-          canvas.toBlob(b => b ? res(b) : rej(new Error('toBlob failed')), 'image/png');
-        });
+        const dataUrl = cv.toDataURL('image/png');
+        blob = dataUrlToBlob(dataUrl);
         ext = 'png';
       }
     } catch (e) {
-      try {
-        // CSP-safe fallback without using fetch()
-        const mime = prefs.format === 'jpg' ? 'image/jpeg' : 'image/png';
-        const dataUrl = canvas.toDataURL(mime, prefs.jpgQuality / 100);
-        blob = dataUrlToBlob(dataUrl);
-        ext = prefs.format === 'jpg' ? 'jpg' : 'png';
-      } catch (err2) {
-        notify('Kare kaydedilemedi: ' + (err2.message || e.message), false);
-        return;
-      }
+      notify('Kare kaydedilemedi: ' + (e.message || ''), false);
+      return false;
     }
 
     if (!blob) {
       notify('Video karesi kaydedilemedi', false);
-      return;
+      return false;
     }
 
     const filename = `${title}_${timeLabel}.${ext}`;
@@ -420,14 +418,14 @@
     const sizeMB = (blob.size / 1024 / 1024).toFixed(1);
     const qName = maxDim >= 3840 ? '4K Ultra HD' : (maxDim >= 1920 ? '1080p Full HD' : `${outW}×${outH}`);
     notify(`✓ ${qName} (${outW}×${outH})  ·  ${sizeMB} MB  ·  ${ext.toUpperCase()}`, true);
+    return true;
   }
 
   // ── Capture Target Trigger ─────────────────────────────────────────────────
   function captureTarget() {
     const v = findTargetVideo();
     if (v) {
-      captureVideo(v);
-      return;
+      return captureVideo(v);
     }
 
     // If no video found in top frame, broadcast to child iframes
@@ -439,11 +437,12 @@
             f.contentWindow?.postMessage({ action: 'uvs_trigger_capture' }, '*');
           } catch (e) {}
         });
-        return;
+        return true;
       }
     }
 
     notify('Sayfada yakalanacak video bulunamadı', false);
+    return false;
   }
 
   // ── macOS Floating Settings Panel ──────────────────────────────────────────
@@ -664,10 +663,9 @@
   // ── YouTube Specific Button Integration ────────────────────────────────────
   function injectYouTubeButtons() {
     if (!location.hostname.includes('youtube.com')) return;
-    if (document.getElementById('yt-fc-btn')) return;
-
     const controls = document.querySelector('.ytp-right-controls');
     if (!controls) return;
+    if (controls.querySelector('#yt-fc-btn')) return;
 
     const makeBtn = (id, title, svg, onClick) => {
       const b = document.createElement('button');
@@ -1018,8 +1016,8 @@
     }
 
     if (req.action === 'capture_now') {
-      captureTarget();
-      sendResponse({ success: true });
+      const ok = captureTarget();
+      sendResponse({ success: !!ok });
       return false;
     }
 
@@ -1031,4 +1029,9 @@
   } else {
     scanVideos();
   }
+
+  // SPA navigation events for YouTube, Vimeo, Twitter/X
+  window.addEventListener('yt-navigate-finish', () => setTimeout(scanVideos, 350));
+  window.addEventListener('load', scanVideos);
+  window.addEventListener('focus', scanVideos);
 })();
