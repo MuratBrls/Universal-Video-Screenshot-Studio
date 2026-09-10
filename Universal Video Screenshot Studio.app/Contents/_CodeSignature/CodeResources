@@ -51,10 +51,10 @@
 		<dict>
 			<key>cdhash</key>
 			<data>
-			HKl32Uf2eRwmxeDrEfrGaAQOA0A=
+			G/+d9xKAU0cpabtmelwNcPMWU74=
 			</data>
 			<key>requirement</key>
-			<string>cdhash H"1ca977d947f6791c26c5e0eb11fac668040e0340"</string>
+			<string>cdhash H"1bff9df7128053472969bb667a5c0d70f31653be"</string>
 		</dict>
 		<key>Resources/AppIcon.icns</key>
 		<dict>

@@ -9,6 +9,8 @@
 (function () {
   'use strict';
 
+  console.log('[UVSS] Content script injected into:', location.href);
+
   // Safari compatibility shim
   const _browser = (typeof browser !== 'undefined') ? browser : chrome;
 

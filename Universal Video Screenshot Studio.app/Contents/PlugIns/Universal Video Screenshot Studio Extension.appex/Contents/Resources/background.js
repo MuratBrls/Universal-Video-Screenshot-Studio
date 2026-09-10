@@ -4,6 +4,7 @@
  */
 
 const _browser = (typeof browser !== 'undefined') ? browser : chrome;
+console.log('[UVSS] Background service initialized.');
 
 // Automatically inject content scripts into open tabs upon extension load or update
 _browser.runtime.onInstalled.addListener(async () => {

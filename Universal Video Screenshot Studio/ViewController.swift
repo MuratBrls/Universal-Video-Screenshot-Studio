@@ -28,7 +28,14 @@ class ViewController: NSViewController, WKNavigationDelegate, WKScriptMessageHan
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        NSLog("[UVSS] webView didFinish navigation, checking extension state for \(extensionBundleIdentifier)...")
         SFSafariExtensionManager.getStateOfSafariExtension(withIdentifier: extensionBundleIdentifier) { (state, error) in
+            if let error = error {
+                NSLog("[UVSS] getStateOfSafariExtension error: %@", error.localizedDescription)
+            }
+            if let state = state {
+                NSLog("[UVSS] getStateOfSafariExtension state.isEnabled: %d", state.isEnabled)
+            }
             guard let state = state, error == nil else {
                 return
             }
